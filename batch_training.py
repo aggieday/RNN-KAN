@@ -1,19 +1,19 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt 
-plt.rcParams["font.sans-serif"]=["Times New Roman"]
-plt.rcParams["axes.unicode_minus"]=False
 from sklearn.model_selection import train_test_split
 import RNN_KAN
+import time
+import warnings
+warnings.filterwarnings("ignore")
 import os
 import sys
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
-import time
-import warnings
-warnings.filterwarnings("ignore")
-
 data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
+time_list = []
+
+# load test data
 df = pd.read_csv(data_dir+'/data/1T_test_data.csv',encoding='gb2312')
 df['MCGS_TIME'] = pd.to_datetime(df['MCGS_TIME'])
 data_for_test = df.set_index('MCGS_TIME')
@@ -21,16 +21,13 @@ data_for_test = df.set_index('MCGS_TIME')
 cnd_K = 4
 evp_K = 6
 cmp_K = 7
-
 K = max(cnd_K, evp_K, cmp_K)
+
+# load training data
 train_data_set = np.load(f'{data_dir}/data/KAN/temp_data/training_data_1T_K={K}.npy', allow_pickle=True)
 train_data_set, _  = train_test_split(train_data_set, test_size=0.8, random_state=42)
 
-time_list = []
-hidden_size = (30,40)
-kan_hidden_size = 20
-grid_size = 10
-# training model
+# prepare the training data
 cmp_trainset_input = train_data_set[:, :, [0,1,2,3,7,5,4]].astype(float)
 cmp_trainset_output = train_data_set[:, -1, [9]].astype(float)
 cnd_trainset_input = train_data_set[:, :, [0,1,2,3,6]].astype(float)
@@ -38,6 +35,11 @@ cnd_trainset_output = train_data_set[:, -1, [4,8]].astype(float)
 evp_trainset_input = train_data_set[:, :, [0,1,2,3,8]].astype(float)
 evp_trainset_output = train_data_set[:, -1, [5,7]].astype(float)
 
+hidden_size = (30,30)
+kan_hidden_size = 20
+grid_size = 10
+
+# train the RNN-KAN model
 start_time = time.time()
 cmp_model, cmp_input_scaler, cmp_output_scaler = RNN_KAN.train(cmp_trainset_input, cmp_trainset_output, hidden_size[1], kan_hidden_size, grid_size)
 cnd_model, cnd_input_scaler, cnd_output_scaler = RNN_KAN.train(cnd_trainset_input, cnd_trainset_output, hidden_size[0], kan_hidden_size, grid_size)
@@ -45,10 +47,11 @@ evp_model, evp_input_scaler, evp_output_scaler = RNN_KAN.train(evp_trainset_inpu
 
 training_time = time.time()
 time_list.append(f'Training time: {training_time-start_time}')
+
 N = data_for_test.shape[0]
 P_cnd, P_evp, H_ref_cnd_out, H_ref_evp_out, H_ref_com_out = [], [], [], [], []
 
-# initialize
+# assign the initial values
 h_cmp_out_array = data_for_test.iloc[0:K-1,6].values
 h_cnd_out_array = data_for_test.iloc[0:K-1,8].values
 h_evp_out_array = data_for_test.iloc[0:K-1,7].values
@@ -58,6 +61,7 @@ p_evp_array = data_for_test.iloc[0:K-1,5].values
 # for condenser as starting subsystem
 h_ref_com_out = data_for_test.iloc[K-1,6]
 
+# predict the outputs
 for t in range(N-K):
     op_paras = data_for_test.iloc[t:t+K,0:4]
     H_ref_com_out.append(h_ref_com_out)
@@ -110,11 +114,9 @@ time_list.append(f'Total time: {test_time-start_time}')
 predict_data = list(zip(P_cnd, P_evp, H_ref_com_out, H_ref_evp_out, H_ref_cnd_out))
 predict_df = pd.DataFrame(predict_data, index=data_for_test.index[K-1:-1], columns=['P_cnd', 'P_evp','H_cmp_out','H_evp_out','H_cnd_out'])
 predict_df['delta_H_cnd'] = predict_df['H_cmp_out']-predict_df['H_cnd_out']
-merged_df = pd.merge(predict_df, data_for_test.iloc[:,4:-1], left_index=True, right_index=True)
-merged_df['delta_h_cnd'] = merged_df['h_cmp_out'] - merged_df['h_cnd_out']
 
 # save the results
-merged_df.to_csv(f'{data_dir}/data/KAN/batch_training/cnd_hybrid.csv', encoding='gb2312')
+predict_df.to_csv(f'{data_dir}/data/KAN/batch_training/cnd_hybrid.csv', encoding='gb2312')
 with open(f'{data_dir}/data/KAN/batch_training/cnd.txt', 'w') as file:
     for item in time_list:
         file.write(f"{item}\n")

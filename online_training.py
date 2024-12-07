@@ -1,8 +1,5 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-plt.rcParams["font.sans-serif"]=["Times New Roman"]
-plt.rcParams["axes.unicode_minus"]=False
 from sklearn.model_selection import train_test_split
 import RNN_KAN
 import time
@@ -26,6 +23,9 @@ def indicator(list, pred_list):
     print(f'MAPE={MAPE},RMSE={RMSE}')
     return MAPE, RMSE
 
+indi_list, time_list = [], []
+
+# load test data
 df = pd.read_csv(data_dir+'/data/1T_test_data.csv',encoding='gb2312')
 df['MCGS_TIME'] = pd.to_datetime(df['MCGS_TIME'])
 data_for_test = df.set_index('MCGS_TIME')
@@ -35,16 +35,16 @@ evp_K = 6
 cmp_K = 7
 K = max(cnd_K, evp_K, cmp_K)
 
+# load training data
 train_data_set = np.load(f'{data_dir}/data/KAN/temp_data/training_data_1T_K={K}.npy', allow_pickle=True)
 train_data_set, _  = train_test_split(train_data_set, test_size=0.8, random_state=42)
 train_data_set = train_data_set[:,:,:-1]
-
 
 hidden_size = (30,30)
 kan_hidden_size = 20
 grid_size = 10
 
-# initialize training data
+# prepare the training data (initialization)
 cmp_trainset_input = train_data_set[:, :, [0,1,2,3,7,5,4]].astype(float)
 cmp_trainset_output = train_data_set[:, -1, [9]].astype(float)
 cnd_trainset_input = train_data_set[:, :, [0,1,2,3,6]].astype(float)
@@ -55,9 +55,8 @@ evp_trainset_output = train_data_set[:, -1, [5,7]].astype(float)
 N = data_for_test.shape[0]
 PH = 1440
 P_cnd, P_evp, H_ref_cnd_out, H_ref_evp_out, H_ref_com_out = [], [], [], [], []
-indi_list, time_list = [], []
 i = 0
-start_time = time.time()\
+start_time = time.time()
 
 while(i+PH<=N-K):
     # train the model by historical data
@@ -67,15 +66,19 @@ while(i+PH<=N-K):
     
     training_time = time.time()
     time_list.append(f'{i//PH}:Training time: {training_time-start_time}')
+    # complete training 
     
-    # complete training and initialize the model
+    # assign the historical values
     h_cmp_out_array = data_for_test.iloc[i:K+i-1,6].values
     h_cnd_out_array = data_for_test.iloc[i:K+i-1,8].values
     h_evp_out_array = data_for_test.iloc[i:K+i-1,7].values
     p_cnd_array = data_for_test.iloc[i:K+i-1,4].values
     p_evp_array = data_for_test.iloc[i:K+i-1,5].values
+
+    # for condenser as starting subsystem
     h_ref_com_out = data_for_test.iloc[i+K-1,6]
     
+    # predict the outputs during the prediction horizon
     for t in range(PH):
         H_ref_com_out.append(h_ref_com_out)
         op_paras = data_for_test.iloc[i+t:i+t+K,0:4]
@@ -130,7 +133,7 @@ while(i+PH<=N-K):
     measured_h_cnd_out = data_for_test.iloc[i+K:i+K+PH,8].values
     measured_h_cmp_out = data_for_test.iloc[i+K:i+K+PH,9].values
     
-    # evaluate the model
+    # evaluate the current model
     indi_list.extend([
         indicator(measured_p_cnd, P_cnd[i:i+PH]),
         indicator(measured_p_evp, P_evp[i:i+PH]),
@@ -159,11 +162,9 @@ predict_data = list(zip(P_cnd, P_evp, H_ref_cnd_out, H_ref_evp_out, H_ref_com_ou
 indi_list = np.array(indi_list).reshape(-1,10)
 predict_df = pd.DataFrame(predict_data, index=data_for_test.index[K-1:K+len(P_cnd)-1], columns=['P_cnd', 'P_eap', 'H_cnd_out', 'H_evp_out', 'H_cmp_out'])
 predict_df['delta_H_cnd'] = predict_df['H_cmp_out']-predict_df['H_cnd_out']
-merged_df = pd.merge(predict_df, data_for_test[4:], left_index=True, right_index=True)
-merged_df['delta_h_cnd'] = merged_df['h_cmp_out'] - merged_df['h_cnd_out']
 
 # save the results
-merged_df.to_csv(f'{data_dir}/data/KAN/online_training/PH={PH}_1018.csv', encoding='gb2312')
+predict_df.to_csv(f'{data_dir}/data/KAN/online_training/PH={PH}_1018.csv', encoding='gb2312')
 with open(f'{data_dir}/data/KAN/online_training/PH={PH}_1018.txt', 'w') as file:
     for item in time_list:
         file.write(f"{item}/n")
